@@ -1,0 +1,127 @@
+---
+title: "Qualitative Activity Recognition of Weight Lifting Exercises"
+author: "Nikolay Chervyakov"
+date: "September 26, 2015"
+output: html_document
+---
+
+## Abstract
+
+The goal of this work is to analyse sensor measures from several men accomplishing a weight lifting and to build a prediction model based on these data which can detect whether a person perform the lifting well. The data for the analysis is taken from <http://groupware.les.inf.puc-rio.br/har>. Researchers collected it and generously provided it to us. 
+
+## Data Processing
+
+### Data Preparing
+
+First, we need to load raw training and testing data into `train.raw` and `test.raw` variables. 
+
+```{r}
+train.raw <- read.csv("pml-training.csv", stringsAsFactors = TRUE)
+test.raw <- read.csv("pml-testing.csv", stringsAsFactors = TRUE)
+```
+
+Examining of the data shows that `train.raw` variable contains many columns with calculated data (such as min, max, var, sd, etc.) but `test.raw` doesn't. So we can remove all calculated fields without any harm and leave only raw sensor data. Also we should remove `X` field, `user_name` because we want to generalize the model and do not need any personal information. Also window-related columns for which the statistics were calculated should be removed, as well as the time related data, because it does not give any useful information for single samples which are time-agnostic. But the `classe` column apparently should be in the dataset.
+
+Altogether we will use the following function to prepare the dataset:
+
+```{r}
+prepareDataset <- function (ds.raw) {
+    library(dplyr)
+    
+    ds.raw %>%
+        select(
+            matches('classe'),
+            
+            roll_belt, pitch_belt, yaw_belt, total_accel_belt,
+            gyros_belt_x, gyros_belt_y, gyros_belt_z,
+            accel_belt_x, accel_belt_y, accel_belt_z,
+            magnet_belt_x, magnet_belt_y, magnet_belt_z, 
+            
+            roll_arm, pitch_arm, yaw_arm, total_accel_arm,
+            gyros_arm_x, gyros_arm_y, gyros_arm_z,
+            accel_arm_x, accel_arm_y, accel_arm_z,
+            magnet_arm_x, magnet_arm_y, magnet_arm_z,
+            
+            roll_dumbbell, pitch_dumbbell, yaw_dumbbell,
+            gyros_dumbbell_x, gyros_dumbbell_y, gyros_dumbbell_z, 
+            accel_dumbbell_x, accel_dumbbell_y, accel_dumbbell_z,
+            magnet_dumbbell_x, magnet_dumbbell_y, magnet_dumbbell_z, 
+            
+            roll_forearm, pitch_forearm, yaw_forearm,
+            gyros_forearm_x, gyros_forearm_y, gyros_forearm_z, 
+            accel_forearm_x, accel_forearm_y, accel_forearm_z, 
+            magnet_forearm_x, magnet_forearm_y, magnet_forearm_z,
+            
+            matches('problem_id')
+        )
+    
+}
+
+```
+
+Now we can prepare clean datasets:
+
+```{r, message = FALSE, warning = FALSE, tidy = FALSE}
+train.clean <- prepareDataset(train.raw)
+test.clean <- prepareDataset(test.raw)
+```
+
+### Model training
+
+Our data is quite noisy and complex. It's just sensor readings and it's useless to build any plots on this data. Also, the data is inherently sequential, because sensor readings go sequentially over time, but he test dataset tells us that we will predict activity quality outside time context, but instead just by one set of measurements.
+So the best learning algorithm for this task in my opinion is a neural network. 
+We will divide the original cleaned training set by 2 parts:
+* 90% training data
+* 10% test data
+Training data will be used to train the neural network using k-folds, and then it will be tested with test dataset.
+
+```{r, cache=TRUE, message = FALSE, warning = FALSE, tidy = FALSE, results='hide'}
+library(caret)
+set.seed(12345)
+
+# split original training set by 2 datasets
+inTrain <- createDataPartition(train.clean$classe, p = 0.9, list = FALSE)
+
+training_set <- train.clean[inTrain,]
+testing_set <- train.clean[-inTrain,]
+
+fitControl <- trainControl(method = "cv")
+
+set.seed(12345)
+nnmodel <- train(classe ~ ., 
+                 data=training_set, 
+                 method="nnet", 
+                 trControl=fitControl, 
+                 preProcess="range", 
+                 maxit=100, 
+                 tuneGrid=data.frame(size=9, decay=0.1), 
+                 verbose=TRUE
+                 )
+```
+
+```{r, echo=FALSE}
+nnmodel
+```
+
+We can see that our model has an accuracy about 80%, which is quite good result. As we also know neural networks can improve result by increasing the hidden layer size.
+The test showed that ANNs with size = 1, 3, 5 is less than what we got, so the reader can investigate the accuracy increasing by himself.
+
+Now let's test this ANN with our testing dataset.
+
+```{r, message = FALSE, warning = FALSE, tidy = FALSE}
+library(gmodels)
+
+CrossTable(testing_set$classe, 
+           predict(nnmodel, testing_set), 
+           prop.r = TRUE, prop.c = FALSE, prop.chisq = FALSE, 
+           dnn = c("Acual", "Predicted")
+           )
+```
+
+As we see in row proportions the percentage of correct predictions varies in the range 69%-87%, which is quite good.
+
+## Conclusion
+
+In this work we analysed weight lifting exercise data and was able to build a neural network which can predict the quality of performing the exercise.
+The resulting model can analyse the realtime data and to tell the person which mistakes he makes. Of course the better solution is to build a model which captures windows of sensor data and analyses that sequences. It can provide much more useful information to the person.
+
